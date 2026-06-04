@@ -1,0 +1,10 @@
+// createGroup(creatorId, name, memberIds)
+// updateGroup(groupId, creatorId, data)     -- name, photo
+// addMembers(groupId, actorId, memberIds)
+// removeMembers(groupId, actorId, memberIds)
+// promoteAdmin(groupId, creatorId, userId)
+// demoteAdmin(groupId, creatorId, userId)
+// leaveGroup(groupId, userId)
+// reportGroup(groupId, userId, reason)
+// setSleepMode(groupId, userId, start, end)
+// getGroupInfo(groupId)

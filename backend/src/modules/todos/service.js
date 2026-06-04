@@ -1,0 +1,7 @@
+// createList(groupId, userId, name, templateType)
+// getLists(groupId)
+// addTask(listId, userId, description, assignedTo, dueDate)
+// toggleTask(listId, taskId, userId)
+// commentTask(listId, taskId, userId, text)
+// archiveList(listId, userId)
+// getTemplates()

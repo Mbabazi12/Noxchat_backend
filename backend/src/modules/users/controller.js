@@ -1,0 +1,10 @@
+// GET    /users/me
+// PUT    /users/me
+// DELETE /users/me
+// POST   /users/block/:targetId
+// DELETE /users/block/:targetId
+// POST   /users/mute/:targetId
+// POST   /users/ghost-mode
+// POST   /users/daily-coins
+// GET    /users/leaderboard
+// GET    /users/transactions
