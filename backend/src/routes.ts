@@ -1,0 +1,20 @@
+import { Router } from 'express';
+
+const router = Router();
+
+router.use('/auth',        require('./modules/auth/route').default);
+router.use('/users',       require('./modules/users/route').default);
+router.use('/chat',        require('./modules/chat/route').default);
+router.use('/groups',      require('./modules/groups/route').default);
+router.use('/confessions', require('./modules/confessions/route').default);
+router.use('/echo',        require('./modules/echo/route').default);
+router.use('/games',       require('./modules/games/route').default);
+router.use('/betting',     require('./modules/betting/route').default);
+router.use('/diary',       require('./modules/diary/route').default);
+router.use('/todos',       require('./modules/todos/route').default);
+router.use('/music',       require('./modules/music/route').default);
+router.use('/status',      require('./modules/status/route').default);
+router.use('/polls',       require('./modules/polls/route').default);
+router.use('/safety',      require('./modules/safety/route').default);
+
+export default router;
