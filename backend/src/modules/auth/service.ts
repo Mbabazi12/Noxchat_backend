@@ -1,10 +1,14 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { User, IUser } from '../users/model';
+import { User } from '../../generated/prisma';
+import prisma from '../../config/db';
 
 const ACCESS_TOKEN_EXPIRY  = '15m';
 const REFRESH_TOKEN_EXPIRY = '7d';
-const MIN_AGE_YEARS = 13;
+const MIN_AGE_YEARS        = 13;
+
+type AuthUser = Pick<User, 'id' | 'name' | 'email' | 'noxCoins' | 'avatar'>;
+type AuthResult = { user: AuthUser; accessToken: string; refreshToken: string };
 
 const signAccess = (userId: string): string =>
   jwt.sign({ id: userId }, process.env.JWT_SECRET as string, { expiresIn: ACCESS_TOKEN_EXPIRY });
@@ -15,69 +19,65 @@ const signRefresh = (userId: string): string =>
 const getAge = (dob: Date): number => {
   const today = new Date();
   let age = today.getFullYear() - dob.getFullYear();
-  const monthDiff = today.getMonth() - dob.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) age--;
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
   return age;
 };
+
+const safeUser = (u: User): AuthUser =>
+  ({ id: u.id, name: u.name, email: u.email, noxCoins: u.noxCoins, avatar: u.avatar });
 
 export const register = async (
   name: string,
   email: string,
   password: string,
   dob: Date,
-): Promise<{ user: Partial<IUser>; accessToken: string; refreshToken: string }> => {
-  if (getAge(dob) < MIN_AGE_YEARS) {
+): Promise<AuthResult> => {
+  if (getAge(dob) < MIN_AGE_YEARS)
     throw Object.assign(new Error('You must be at least 13 years old to register.'), { status: 403 });
-  }
 
-  const existing = await User.findOne({ email });
-  if (existing) {
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing)
     throw Object.assign(new Error('Email already in use.'), { status: 409 });
-  }
 
   const hashed = await bcrypt.hash(password, 12);
-  const user = await User.create({ name, email, password: hashed, dob });
 
-  const accessToken  = signAccess(String(user._id));
-  const refreshToken = signRefresh(String(user._id));
+  const user = await prisma.user.create({
+    data: { name, email, password: hashed, dob },
+  });
 
-  user.refreshToken = refreshToken;
-  await user.save();
+  const accessToken  = signAccess(user.id);
+  const refreshToken = signRefresh(user.id);
 
-  return {
-    user:  { _id: user._id, name: user.name, email: user.email, noxCoins: user.noxCoins },
-    accessToken,
-    refreshToken,
-  };
+  await prisma.user.update({
+    where: { id: user.id },
+    data:  { refreshToken },
+  });
+
+  return { user: safeUser(user), accessToken, refreshToken };
 };
 
 export const login = async (
   email: string,
   password: string,
-): Promise<{ user: Partial<IUser>; accessToken: string; refreshToken: string }> => {
-  const user = await User.findOne({ email }).select('+password +refreshToken');
-  if (!user) {
+): Promise<AuthResult> => {
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user)
     throw Object.assign(new Error('Invalid email or password.'), { status: 401 });
-  }
 
   const match = await bcrypt.compare(password, user.password);
-  if (!match) {
+  if (!match)
     throw Object.assign(new Error('Invalid email or password.'), { status: 401 });
-  }
 
-  const accessToken  = signAccess(String(user._id));
-  const refreshToken = signRefresh(String(user._id));
+  const accessToken  = signAccess(user.id);
+  const refreshToken = signRefresh(user.id);
 
-  user.refreshToken = refreshToken;
-  user.onlineStatus = true;
-  user.lastSeen = new Date();
-  await user.save();
+  await prisma.user.update({
+    where: { id: user.id },
+    data:  { refreshToken, onlineStatus: true, lastSeen: new Date() },
+  });
 
-  return {
-    user:  { _id: user._id, name: user.name, email: user.email, noxCoins: user.noxCoins, avatar: user.avatar },
-    accessToken,
-    refreshToken,
-  };
+  return { user: safeUser(user), accessToken, refreshToken };
 };
 
 export const refreshAccessToken = async (
@@ -90,19 +90,16 @@ export const refreshAccessToken = async (
     throw Object.assign(new Error('Invalid or expired refresh token.'), { status: 401 });
   }
 
-  const user = await User.findById(payload.id).select('+refreshToken');
-  if (!user || user.refreshToken !== token) {
+  const user = await prisma.user.findUnique({ where: { id: payload.id } });
+  if (!user || user.refreshToken !== token)
     throw Object.assign(new Error('Refresh token revoked.'), { status: 401 });
-  }
 
-  const accessToken = signAccess(String(user._id));
-  return { accessToken };
+  return { accessToken: signAccess(user.id) };
 };
 
 export const logout = async (userId: string): Promise<void> => {
-  await User.findByIdAndUpdate(userId, {
-    refreshToken: null,
-    onlineStatus: false,
-    lastSeen: new Date(),
+  await prisma.user.update({
+    where: { id: userId },
+    data:  { refreshToken: null, onlineStatus: false, lastSeen: new Date() },
   });
 };

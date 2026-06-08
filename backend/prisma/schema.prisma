@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                   String    @id @default(uuid())
+  name                 String
+  email                String    @unique
+  password             String
+  dob                  DateTime
+  avatar               String    @default("")
+
+  onlineStatus         Boolean   @default(false)
+  lastSeen             DateTime  @default(now())
+
+  // Ghost mode stored as flat columns (no nested objects in SQL)
+  ghostModeEnabled     Boolean   @default(false)
+  ghostScheduleStart   String    @default("")
+  ghostScheduleEnd     String    @default("")
+
+  noxCoins             Int       @default(100)
+  dailyCoinLastClaimed DateTime?
+
+  // Settings
+  notificationsEnabled Boolean   @default(true)
+  dataSaver            Boolean   @default(false)
+
+  weeklyBadge          Boolean   @default(false)
+  refreshToken         String?
+
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  // Self-referencing relations for block/mute/ghost whitelist
+  blockedUsers         User[]    @relation("BlockedUsers")
+  blockedBy            User[]    @relation("BlockedUsers")
+
+  mutedUsers           User[]    @relation("MutedUsers")
+  mutedBy              User[]    @relation("MutedUsers")
+
+  ghostWhitelist       User[]    @relation("GhostWhitelist")
+  ghostWhitelistedBy   User[]    @relation("GhostWhitelist")
+
+  @@map("users")
+}

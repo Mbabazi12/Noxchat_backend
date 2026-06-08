@@ -1,3 +1,2 @@
-// User model lives in src/modules/users/model.ts
-// Auth module imports from there directly.
-export { User, IUser } from '../users/model';
+// User type lives in src/modules/users/model.ts (Prisma generated)
+export type { User } from '../users/model';
