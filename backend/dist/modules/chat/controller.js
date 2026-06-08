@@ -1,0 +1,26 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getThrowback = exports.searchMessages = exports.getOrCreateDirect = exports.markAsRead = exports.unpinMessage = exports.pinMessage = exports.forwardMessage = exports.deleteForMe = exports.deleteForEveryone = exports.getMessages = exports.sendMessage = void 0;
+const sendMessage = async (_req, _res) => { };
+exports.sendMessage = sendMessage;
+const getMessages = async (_req, _res) => { };
+exports.getMessages = getMessages;
+const deleteForEveryone = async (_req, _res) => { };
+exports.deleteForEveryone = deleteForEveryone;
+const deleteForMe = async (_req, _res) => { };
+exports.deleteForMe = deleteForMe;
+const forwardMessage = async (_req, _res) => { };
+exports.forwardMessage = forwardMessage;
+const pinMessage = async (_req, _res) => { };
+exports.pinMessage = pinMessage;
+const unpinMessage = async (_req, _res) => { };
+exports.unpinMessage = unpinMessage;
+const markAsRead = async (_req, _res) => { };
+exports.markAsRead = markAsRead;
+const getOrCreateDirect = async (_req, _res) => { };
+exports.getOrCreateDirect = getOrCreateDirect;
+const searchMessages = async (_req, _res) => { };
+exports.searchMessages = searchMessages;
+const getThrowback = async (_req, _res) => { };
+exports.getThrowback = getThrowback;
+//# sourceMappingURL=controller.js.map

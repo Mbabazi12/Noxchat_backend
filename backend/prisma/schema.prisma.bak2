@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Outcome {
+  pending
+  win
+  loss
+}
+
+model User {
+  id String @id @default(cuid())
+  email String @unique
+  password String
+  name String?
+  dob DateTime?
+  avatar String?
+  onlineStatus Boolean @default(false)
+  lastSeen DateTime?
+  noxCoins Int @default(0)
+  dailyCoinLastClaimed DateTime?
+  weeklyBadge Boolean @default(false)
+  lastWeeklyBadgeAwarded DateTime?
+  ghostModeEnabled Boolean @default(false)
+  ghostModeStartTime String?
+  ghostModeEndTime String?
+  ghostWhitelist Json? @default("[]")
+  settings Json? @default("{}")
+  blockedUsers Json? @default("[]")
+  mutedUsers Json? @default("[]")
+  deletedAt DateTime?
+  pendingDeletionAt DateTime?
+  isDeleted Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  bets Bet[]
+}
+
+model Bet {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id])
+  amount Int
+  outcome Outcome @default(pending)
+  createdAt DateTime @default(now())
+  settledAt DateTime?
+}
