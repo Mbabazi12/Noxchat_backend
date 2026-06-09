@@ -1,1 +1,2 @@
-// Handled by users/model.ts
+// User type lives in src/modules/users/model.ts (Prisma generated)
+export type { User } from '../users/model';
