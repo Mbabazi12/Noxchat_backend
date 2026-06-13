@@ -1,79 +1,61 @@
 import { Request, Response } from 'express';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import prisma from '../../config/db';
+import * as authService from './service';
 import { success, error } from '../../utils/response';
+import { AuthRequest } from '../../middlewares/auth';
 
-// POST /api/auth/register
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, email, password, dob } = req.body as { name?: string; email?: string; password?: string; dob?: string };
-    if (!email || !password) {
-      error(res, 'Email and password are required', 400);
+    const { name, email, password, dob } = req.body;
+
+    if (!name || !email || !password || !dob) {
+      error(res, 'name, email, password and dob are required.', 400);
       return;
     }
 
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing) {
-      error(res, 'Email already registered', 400);
-      return;
-    }
-
-    const hashed = await bcrypt.hash(password, 10);
-    const created = await prisma.user.create({
-      data: {
-        email,
-        password: hashed,
-        name: name || null,
-        dob: dob ? new Date(dob) : null,
-      },
-    });
-
-    const token = jwt.sign({ id: created.id }, process.env.JWT_SECRET as string, { expiresIn: process.env.JWT_EXPIRES_IN });
-    const { password: _p, ...user } = created as any;
-    success(res, { user, token }, 201);
-  } catch (err) {
-    error(res, (err as Error).message, 500);
+    const result = await authService.register(name, email, password, new Date(dob));
+    success(res, result, 201);
+  } catch (err: any) {
+    error(res, err.message, err.status ?? 500);
   }
 };
 
-// POST /api/auth/login
 export const login = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password } = req.body as { email?: string; password?: string };
+    const { email, password } = req.body;
+
     if (!email || !password) {
-      error(res, 'Email and password are required', 400);
+      error(res, 'email and password are required.', 400);
       return;
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user || user.isDeleted) {
-      error(res, 'Invalid credentials', 401);
-      return;
-    }
-
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) {
-      error(res, 'Invalid credentials', 401);
-      return;
-    }
-
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET as string, { expiresIn: process.env.JWT_EXPIRES_IN });
-    const { password: _p, ...safeUser } = user as any;
-    success(res, { user: safeUser, token });
-  } catch (err) {
-    error(res, (err as Error).message, 500);
+    const result = await authService.login(email, password);
+    success(res, result);
+  } catch (err: any) {
+    error(res, err.message, err.status ?? 500);
   }
 };
 
-// POST /api/auth/logout
-export const logout = async (_req: Request, res: Response): Promise<void> => {
-  // Stateless JWT logout - client should discard token
-  success(res, { message: 'Logged out' });
+export const refresh = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      error(res, 'refreshToken is required.', 400);
+      return;
+    }
+
+    const result = await authService.refreshAccessToken(refreshToken);
+    success(res, result);
+  } catch (err: any) {
+    error(res, err.message, err.status ?? 500);
+  }
 };
 
-// POST /api/auth/refresh
-export const refresh = async (_req: Request, res: Response): Promise<void> => {
-  // Not implemented - token refresh flow not present
-  error(res, 'Not implemented', 501);
+export const logout = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    await authService.logout(req.user!.id as string);
+    success(res, { message: 'Logged out successfully.' });
+  } catch (err: any) {
+    error(res, err.message, err.status ?? 500);
+  }
 };
