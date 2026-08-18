@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Presence {
+  online
+  offline
+  ghost
+}
+
+model User {
+  id                 String         @id @default(uuid())
+  email              String         @unique
+  displayName        String
+  avatarUrl          String?
+  bio                String?
+  birthDate          DateTime
+  presence           Presence       @default(offline)
+  lastSeenAt         DateTime       @default(now())
+  ghostModeEnabled   Boolean        @default(false)
+  ghostWhitelist     String[]       @default([])
+  ghostScheduleStart String?
+  ghostScheduleEnd   String?
+  noxCoinBalance     Int            @default(100)
+  blockedUserIds     String[]       @default([])
+  mutedUserIds       String[]       @default([])
+  pushToken          String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  refreshTokens      RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model OtpCode {
+  id          String    @id @default(uuid())
+  email       String
+  code        String
+  birthDate   DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+}
