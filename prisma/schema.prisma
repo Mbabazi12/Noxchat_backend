@@ -13,10 +13,19 @@ enum Presence {
   ghost
 }
 
+enum Gender {
+  male
+  female
+  non_binary
+  prefer_not_to_say
+}
+
 model User {
   id                 String         @id @default(uuid())
-  email              String         @unique
+  username           String         @unique
+  passwordHash       String
   displayName        String
+  gender             Gender?
   avatarUrl          String?
   bio                String?
   birthDate          DateTime
@@ -27,12 +36,39 @@ model User {
   ghostScheduleStart String?
   ghostScheduleEnd   String?
   noxCoinBalance     Int            @default(100)
-  blockedUserIds     String[]       @default([])
-  mutedUserIds       String[]       @default([])
   pushToken          String?
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
   refreshTokens      RefreshToken[]
+  blocking           Block[]        @relation("Blocker")
+  blockedBy          Block[]        @relation("Blocked")
+  muting             Mute[]         @relation("Muter")
+  mutedBy            Mute[]         @relation("Muted")
+}
+
+// Blocking is modeled as rows, not a String[] on User, so a block always
+// points at a real user (FK-enforced) and disappears via cascade if either
+// side of it is deleted — a plain ID array on User couldn't guarantee either.
+model Block {
+  id           String   @id @default(uuid())
+  userId       String
+  targetUserId String
+  createdAt    DateTime @default(now())
+  user         User     @relation("Blocker", fields: [userId], references: [id], onDelete: Cascade)
+  target       User     @relation("Blocked", fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, targetUserId])
+}
+
+model Mute {
+  id           String   @id @default(uuid())
+  userId       String
+  targetUserId String
+  createdAt    DateTime @default(now())
+  user         User     @relation("Muter", fields: [userId], references: [id], onDelete: Cascade)
+  target       User     @relation("Muted", fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, targetUserId])
 }
 
 model RefreshToken {
@@ -45,11 +81,3 @@ model RefreshToken {
   createdAt DateTime @default(now())
 }
 
-model OtpCode {
-  id          String    @id @default(uuid())
-  email       String
-  code        String
-  birthDate   DateTime?
-  expiresAt   DateTime
-  createdAt   DateTime  @default(now())
-}
