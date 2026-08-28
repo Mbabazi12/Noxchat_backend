@@ -4,7 +4,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { Gender } from '@prisma/client';
+import { Gender, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { USER_RELATIONS_INCLUDE, serializeUser } from '../common/serialize-user';
@@ -96,17 +96,25 @@ export class AuthService {
         throw new BadRequestException('Username is already taken.');
       }
 
-      const user = await this.prisma.user.create({
-        data: {
-          username: dto.username,
-          passwordHash,
-          displayName: dto.displayName,
-          gender: dto.gender,
-          birthDate,
-          noxCoinBalance: 100,
-        },
-        include: USER_RELATIONS_INCLUDE,
-      });
+      let user;
+      try {
+        user = await this.prisma.user.create({
+          data: {
+            username: dto.username,
+            passwordHash,
+            displayName: dto.displayName,
+            gender: dto.gender,
+            birthDate,
+            noxCoinBalance: 100,
+          },
+          include: USER_RELATIONS_INCLUDE,
+        });
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          throw new BadRequestException('Username is already taken.');
+        }
+        throw err;
+      }
 
       const tokens = await this.generateTokens(user.id, user.username);
 
@@ -202,10 +210,16 @@ export class AuthService {
         throw new UnauthorizedException('Session expired. Please login again.');
       }
 
-      await this.prisma.refreshToken.update({
-        where: { id: storedToken.id },
+      // Conditional on revoked: false so only one of two concurrent requests using the
+      // same token can win the rotation — the loser sees 0 rows updated, not a stale read.
+      const rotated = await this.prisma.refreshToken.updateMany({
+        where: { id: storedToken.id, revoked: false },
         data: { revoked: true },
       });
+
+      if (rotated.count === 0) {
+        throw new UnauthorizedException('Session expired. Please login again.');
+      }
 
       return this.generateTokens(storedToken.user.id, storedToken.user.username);
     } else {
