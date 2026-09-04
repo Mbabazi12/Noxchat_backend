@@ -1,23 +1,28 @@
 import {
   BadRequestException,
   Injectable,
-  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { Gender, Prisma } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
-import { MailService } from '../mail/mail.service';
+import { USER_RELATIONS_INCLUDE, serializeUser } from '../common/serialize-user';
 import { SignupDto } from './dto/signup.dto';
-import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { LogoutDto } from './dto/logout.dto';
 import * as crypto from 'crypto';
 
+const BCRYPT_SALT_ROUNDS = 10;
+const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // sliding 7-day window, renewed on every refresh
+
 interface InMemoryUser {
   id: string;
-  email: string;
+  username: string;
+  passwordHash: string;
   displayName: string;
+  gender?: Gender;
   birthDate: Date;
   presence: 'online' | 'offline' | 'ghost';
   lastSeenAt: Date;
@@ -26,13 +31,6 @@ interface InMemoryUser {
   mutedUserIds: string[];
   createdAt: Date;
   updatedAt: Date;
-}
-
-interface InMemoryOtp {
-  email: string;
-  code: string;
-  birthDate?: Date;
-  expiresAt: Date;
 }
 
 interface InMemoryRefreshToken {
@@ -45,14 +43,17 @@ interface InMemoryRefreshToken {
 @Injectable()
 export class AuthService {
   private inMemoryUsers: Map<string, InMemoryUser> = new Map();
-  private inMemoryOtps: InMemoryOtp[] = [];
   private inMemoryTokens: Map<string, InMemoryRefreshToken> = new Map();
 
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
-    private mailService: MailService,
   ) {}
+
+  private omitPassword(user: InMemoryUser) {
+    const { passwordHash: _passwordHash, ...rest } = user;
+    return rest;
+  }
 
   private calculateAge(birthDate: Date): number {
     const today = new Date();
@@ -67,21 +68,11 @@ export class AuthService {
     return age;
   }
 
-  private generateOtpCode(): string {
-    return process.env.NODE_ENV === 'production'
-      ? Math.floor(100000 + Math.random() * 900000).toString()
-      : '123456';
-  }
-
-  private buildOtpResponse(email: string, code: string) {
-    return {
-      message: 'OTP sent successfully',
-      email,
-      ...(process.env.NODE_ENV !== 'production' && { otp: code }),
-    };
-  }
-
   async signup(dto: SignupDto) {
+    if (dto.password !== dto.confirmPassword) {
+      throw new BadRequestException('Passwords do not match');
+    }
+
     const birthDate = new Date(dto.birthDate);
     if (isNaN(birthDate.getTime())) {
       throw new BadRequestException('Invalid birth date format. Use YYYY-MM-DD');
@@ -94,179 +85,115 @@ export class AuthService {
       );
     }
 
-    const code = this.generateOtpCode();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_SALT_ROUNDS);
 
     if (this.prisma.isConnected) {
       const existingUser = await this.prisma.user.findUnique({
-        where: { email: dto.email },
+        where: { username: dto.username },
       });
 
       if (existingUser) {
-        throw new BadRequestException('Email is already registered. Please login.');
+        throw new BadRequestException('Username is already taken.');
       }
 
-      await this.prisma.otpCode.create({
-        data: {
-          email: dto.email,
-          code,
-          birthDate,
-          expiresAt,
-        },
-      });
-    } else {
-      const existingUser = Array.from(this.inMemoryUsers.values()).find(
-        (u) => u.email === dto.email,
-      );
-
-      if (existingUser) {
-        throw new BadRequestException('Email is already registered. Please login.');
-      }
-
-      this.inMemoryOtps.push({
-        email: dto.email,
-        code,
-        birthDate,
-        expiresAt,
-      });
-    }
-
-    await this.mailService.sendOtpEmail(dto.email, code);
-
-    return this.buildOtpResponse(dto.email, code);
-  }
-
-  async login(dto: LoginDto) {
-    const code = this.generateOtpCode();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
-    if (this.prisma.isConnected) {
-      const user = await this.prisma.user.findUnique({
-        where: { email: dto.email },
-      });
-
-      if (!user) {
-        throw new NotFoundException('Account not found with this email. Please sign up first.');
-      }
-
-      await this.prisma.otpCode.create({
-        data: {
-          email: dto.email,
-          code,
-          expiresAt,
-        },
-      });
-    } else {
-      const user = Array.from(this.inMemoryUsers.values()).find(
-        (u) => u.email === dto.email,
-      );
-
-      if (!user) {
-        throw new NotFoundException('Account not found with this email. Please sign up first.');
-      }
-
-      this.inMemoryOtps.push({
-        email: dto.email,
-        code,
-        expiresAt,
-      });
-    }
-
-    await this.mailService.sendOtpEmail(dto.email, code);
-
-    return this.buildOtpResponse(dto.email, code);
-  }
-
-  async verifyOtp(dto: VerifyOtpDto) {
-    if (this.prisma.isConnected) {
-      const validOtp = await this.prisma.otpCode.findFirst({
-        where: {
-          email: dto.email,
-          code: dto.code,
-          expiresAt: { gte: new Date() },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
-
-      if (!validOtp) {
-        throw new UnauthorizedException('Invalid or expired OTP code');
-      }
-
-      let user = await this.prisma.user.findUnique({
-        where: { email: dto.email },
-      });
-
-      if (!user) {
-        if (!validOtp.birthDate) {
-          throw new BadRequestException('Birth date is required for new user registration');
-        }
-
+      let user;
+      try {
         user = await this.prisma.user.create({
           data: {
-            email: dto.email,
-            displayName: dto.displayName || `User_${dto.email.split('@')[0]}`,
-            birthDate: validOtp.birthDate,
+            username: dto.username,
+            passwordHash,
+            displayName: dto.displayName,
+            gender: dto.gender,
+            birthDate,
             noxCoinBalance: 100,
           },
+          include: USER_RELATIONS_INCLUDE,
         });
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          throw new BadRequestException('Username is already taken.');
+        }
+        throw err;
       }
 
-      await this.prisma.otpCode.deleteMany({
-        where: { email: dto.email },
-      });
-
-      const tokens = await this.generateTokens(user.id, user.email);
+      const tokens = await this.generateTokens(user.id, user.username);
 
       return {
-        message: 'OTP verified successfully',
-        user,
+        message: 'Signed up successfully',
+        user: serializeUser(user),
         ...tokens,
       };
     } else {
-      const otpIdx = this.inMemoryOtps.findIndex(
-        (o) => o.email === dto.email && o.code === dto.code && o.expiresAt >= new Date(),
+      const existingUser = Array.from(this.inMemoryUsers.values()).find(
+        (u) => u.username === dto.username,
       );
 
-      if (otpIdx === -1) {
-        throw new UnauthorizedException('Invalid or expired OTP code');
+      if (existingUser) {
+        throw new BadRequestException('Username is already taken.');
       }
 
-      const validOtp = this.inMemoryOtps[otpIdx];
+      const id = crypto.randomUUID();
+      const user: InMemoryUser = {
+        id,
+        username: dto.username,
+        passwordHash,
+        displayName: dto.displayName,
+        gender: dto.gender,
+        birthDate,
+        presence: 'offline',
+        lastSeenAt: new Date(),
+        noxCoinBalance: 100,
+        blockedUserIds: [],
+        mutedUserIds: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      this.inMemoryUsers.set(id, user);
 
-      let user = Array.from(this.inMemoryUsers.values()).find(
-        (u) => u.email === dto.email,
-      );
-
-      if (!user) {
-        if (!validOtp.birthDate) {
-          throw new BadRequestException('Birth date is required for new user registration');
-        }
-
-        const id = crypto.randomUUID();
-        user = {
-          id,
-          email: dto.email,
-          displayName: dto.displayName || `User_${dto.email.split('@')[0]}`,
-          birthDate: validOtp.birthDate,
-          presence: 'offline',
-          lastSeenAt: new Date(),
-          noxCoinBalance: 100,
-          blockedUserIds: [],
-          mutedUserIds: [],
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-
-        this.inMemoryUsers.set(id, user);
-      }
-
-      this.inMemoryOtps.splice(otpIdx, 1);
-
-      const tokens = await this.generateTokens(user.id, user.email);
+      const tokens = await this.generateTokens(user.id, user.username);
 
       return {
-        message: 'OTP verified successfully',
-        user,
+        message: 'Signed up successfully',
+        user: this.omitPassword(user),
+        ...tokens,
+      };
+    }
+  }
+
+  async login(dto: LoginDto) {
+    const invalidCredentials = () => new UnauthorizedException('Invalid username or password');
+
+    if (this.prisma.isConnected) {
+      const user = await this.prisma.user.findUnique({
+        where: { username: dto.username },
+        include: USER_RELATIONS_INCLUDE,
+      });
+
+      if (!user || !(await bcrypt.compare(dto.password, user.passwordHash))) {
+        throw invalidCredentials();
+      }
+
+      const tokens = await this.generateTokens(user.id, user.username);
+
+      return {
+        message: 'Logged in successfully',
+        user: serializeUser(user),
+        ...tokens,
+      };
+    } else {
+      const user = Array.from(this.inMemoryUsers.values()).find(
+        (u) => u.username === dto.username,
+      );
+
+      if (!user || !(await bcrypt.compare(dto.password, user.passwordHash))) {
+        throw invalidCredentials();
+      }
+
+      const tokens = await this.generateTokens(user.id, user.username);
+
+      return {
+        message: 'Logged in successfully',
+        user: this.omitPassword(user),
         ...tokens,
       };
     }
@@ -280,32 +207,34 @@ export class AuthService {
       });
 
       if (!storedToken || storedToken.revoked || storedToken.expiresAt < new Date()) {
-        throw new UnauthorizedException('Invalid or expired refresh token');
+        throw new UnauthorizedException('Session expired. Please login again.');
       }
 
-      await this.prisma.refreshToken.update({
-        where: { id: storedToken.id },
+      // Conditional on revoked: false so only one of two concurrent requests using the
+      // same token can win the rotation — the loser sees 0 rows updated, not a stale read.
+      const rotated = await this.prisma.refreshToken.updateMany({
+        where: { id: storedToken.id, revoked: false },
         data: { revoked: true },
       });
 
-      const tokens = await this.generateTokens(storedToken.user.id, storedToken.user.email);
+      if (rotated.count === 0) {
+        throw new UnauthorizedException('Session expired. Please login again.');
+      }
 
-      return tokens;
+      return this.generateTokens(storedToken.user.id, storedToken.user.username);
     } else {
       const stored = this.inMemoryTokens.get(dto.refreshToken);
 
       if (!stored || stored.revoked || stored.expiresAt < new Date()) {
-        throw new UnauthorizedException('Invalid or expired refresh token');
+        throw new UnauthorizedException('Session expired. Please login again.');
       }
 
       stored.revoked = true;
 
       const user = this.inMemoryUsers.get(stored.userId);
-      const email = user ? user.email : '';
+      const username = user ? user.username : '';
 
-      const tokens = await this.generateTokens(stored.userId, email);
-
-      return tokens;
+      return this.generateTokens(stored.userId, username);
     }
   }
 
@@ -325,15 +254,15 @@ export class AuthService {
     return { message: 'Logged out successfully' };
   }
 
-  private async generateTokens(userId: string, email: string) {
-    const payload = { sub: userId, email };
+  private async generateTokens(userId: string, username: string) {
+    const payload = { sub: userId, username };
 
     const accessToken = this.jwtService.sign(payload, {
       expiresIn: '15m',
     });
 
     const rawRefreshToken = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS);
 
     if (this.prisma.isConnected) {
       await this.prisma.refreshToken.create({

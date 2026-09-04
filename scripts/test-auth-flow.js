@@ -21,148 +21,158 @@ function request(options, body) {
   });
 }
 
+function post(path, body) {
+  return request(
+    {
+      host: 'localhost',
+      port: 3000,
+      path,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    },
+    body,
+  );
+}
+
+let allPassed = true;
+
+function check(condition, passMsg, failMsg, details) {
+  if (condition) {
+    console.log(passMsg);
+  } else {
+    allPassed = false;
+    console.error(failMsg, details);
+  }
+}
+
 async function runTests() {
   console.log('--- STARTING AUTHENTICATION FLOW VERIFICATION ---');
 
-  // 0. Verify Swagger docs endpoint
+  // Base36 timestamp keeps every derived username well under the 20-char limit
+  // even with a suffix appended, and stays lowercase-alphanumeric by construction.
+  const base = `t${Date.now().toString(36)}`;
+  const username = base;
+  const password = 'correct-horse-battery-staple';
+
+  // 0. Swagger docs endpoint
   console.log('\n[TEST 0] Testing Swagger UI endpoint at /api/docs ...');
-  const docsRes = await request({
-    host: 'localhost',
-    port: 3000,
-    path: '/api/docs',
-    method: 'GET',
-  });
-  console.log(`Swagger Status Code: ${docsRes.statusCode}`);
-  if (docsRes.statusCode === 200) {
-    console.log('✅ Swagger UI is active!');
-  } else {
-    console.error('❌ Swagger UI check failed');
-  }
+  const docsRes = await request({ host: 'localhost', port: 3000, path: '/api/docs', method: 'GET' });
+  check(docsRes.statusCode === 200, '✅ Swagger UI is active!', '❌ Swagger UI check failed', docsRes);
 
-  // 1. Signup Under 13 (Should fail with 400 Bad Request)
+  // 1. Signup under 13 (should fail with 400)
   console.log('\n[TEST 1] Testing POST /api/v1/auth/signup (under 13 years old age gate)...');
-  const under13Res = await request(
-    {
-      host: 'localhost',
-      port: 3000,
-      path: '/api/v1/auth/signup',
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    },
-    { email: 'under13@example.com', birthDate: '2020-01-01' },
+  const under13Res = await post('/api/v1/auth/signup', {
+    username: `${base}a`,
+    displayName: 'Too Young',
+    birthDate: '2020-01-01',
+    password,
+    confirmPassword: password,
+  });
+  check(
+    under13Res.statusCode === 400,
+    '✅ Age gate correctly blocked under 13 signup!',
+    '❌ Age gate failed!',
+    under13Res.body,
   );
-  console.log('Under-13 Response:', under13Res);
-  if (under13Res.statusCode === 400) {
-    console.log('✅ Age gate correctly blocked under 13 signup!');
-  } else {
-    console.error('❌ Age gate failed!');
-  }
 
-  // 2. Signup Valid User (Age > 13)
-  console.log('\n[TEST 2] Testing POST /api/v1/auth/signup (valid age 20)...');
-  const validSignupRes = await request(
-    {
-      host: 'localhost',
-      port: 3000,
-      path: '/api/v1/auth/signup',
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    },
-    { email: 'alex@example.com', birthDate: '2000-01-01' },
+  // 2. Signup with mismatched passwords (should fail with 400)
+  console.log('\n[TEST 2] Testing POST /api/v1/auth/signup (password mismatch)...');
+  const mismatchRes = await post('/api/v1/auth/signup', {
+    username: `${base}m`,
+    displayName: 'Mismatch Test',
+    birthDate: '2000-01-01',
+    password,
+    confirmPassword: 'different-password',
+  });
+  check(
+    mismatchRes.statusCode === 400,
+    '✅ Password mismatch correctly rejected!',
+    '❌ Password mismatch check failed!',
+    mismatchRes.body,
   );
-  console.log('Valid Signup Response:', validSignupRes);
-  if (validSignupRes.statusCode === 201 && validSignupRes.body.otp === '123456') {
-    console.log('✅ Signup OTP generated successfully!');
-  } else {
-    console.error('❌ Signup failed!');
-  }
 
-  // 3. Verify OTP
-  console.log('\n[TEST 3] Testing POST /api/v1/auth/verify-otp...');
-  const verifyRes = await request(
-    {
-      host: 'localhost',
-      port: 3000,
-      path: '/api/v1/auth/verify-otp',
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    },
-    { email: 'alex@example.com', code: '123456', displayName: 'Alex Nox' },
+  // 3. Signup valid user (should create account and return tokens directly)
+  console.log('\n[TEST 3] Testing POST /api/v1/auth/signup (valid)...');
+  const signupRes = await post('/api/v1/auth/signup', {
+    username,
+    displayName: 'Test User',
+    birthDate: '2000-01-01',
+    password,
+    confirmPassword: password,
+  });
+  check(
+    signupRes.statusCode === 201 &&
+      signupRes.body.accessToken &&
+      signupRes.body.refreshToken &&
+      signupRes.body.user.noxCoinBalance === 100,
+    '✅ Signup succeeded! Tokens issued directly, 100 Nox Coins starting balance.',
+    '❌ Signup failed!',
+    signupRes.body,
   );
-  console.log('Verify OTP Response:', verifyRes);
-  if (
-    verifyRes.statusCode === 200 &&
-    verifyRes.body.accessToken &&
-    verifyRes.body.refreshToken &&
-    verifyRes.body.user.noxCoinBalance === 100
-  ) {
-    console.log('✅ Verify OTP succeeded! Issued JWT access token, refresh token & 100 Nox Coins starting balance.');
-  } else {
-    console.error('❌ Verify OTP failed!');
-  }
 
-  const refreshToken = verifyRes.body.refreshToken;
-
-  // 4. Request Login OTP for existing user
-  console.log('\n[TEST 4] Testing POST /api/v1/auth/login...');
-  const loginRes = await request(
-    {
-      host: 'localhost',
-      port: 3000,
-      path: '/api/v1/auth/login',
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    },
-    { email: 'alex@example.com' },
+  // 4. Login with wrong password (should fail with 401)
+  console.log('\n[TEST 4] Testing POST /api/v1/auth/login (wrong password)...');
+  const wrongLoginRes = await post('/api/v1/auth/login', { username, password: 'wrong-password' });
+  check(
+    wrongLoginRes.statusCode === 401,
+    '✅ Wrong password correctly rejected!',
+    '❌ Wrong password check failed!',
+    wrongLoginRes.body,
   );
-  console.log('Login Response:', loginRes);
-  if (loginRes.statusCode === 200 && loginRes.body.otp === '123456') {
-    console.log('✅ Login OTP requested successfully!');
-  } else {
-    console.error('❌ Login OTP request failed!');
-  }
 
-  // 5. Refresh Tokens
-  console.log('\n[TEST 5] Testing POST /api/v1/auth/refresh...');
-  const refreshRes = await request(
-    {
-      host: 'localhost',
-      port: 3000,
-      path: '/api/v1/auth/refresh',
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    },
-    { refreshToken },
+  // 5. Login with correct credentials
+  console.log('\n[TEST 5] Testing POST /api/v1/auth/login (correct credentials)...');
+  const loginRes = await post('/api/v1/auth/login', { username, password });
+  check(
+    loginRes.statusCode === 200 && loginRes.body.accessToken && loginRes.body.refreshToken,
+    '✅ Login succeeded!',
+    '❌ Login failed!',
+    loginRes.body,
   );
-  console.log('Refresh Response:', refreshRes);
-  if (refreshRes.statusCode === 200 && refreshRes.body.accessToken && refreshRes.body.refreshToken) {
-    console.log('✅ Refresh token exchanged for a new token pair successfully!');
-  } else {
-    console.error('❌ Token refresh failed!');
-  }
+
+  const refreshToken = loginRes.body.refreshToken;
+
+  // 6. Refresh tokens
+  console.log('\n[TEST 6] Testing POST /api/v1/auth/refresh...');
+  const refreshRes = await post('/api/v1/auth/refresh', { refreshToken });
+  check(
+    refreshRes.statusCode === 200 && refreshRes.body.accessToken && refreshRes.body.refreshToken,
+    '✅ Refresh token exchanged for a new token pair successfully!',
+    '❌ Token refresh failed!',
+    refreshRes.body,
+  );
 
   const newRefreshToken = refreshRes.body.refreshToken;
 
-  // 6. Logout
-  console.log('\n[TEST 6] Testing POST /api/v1/auth/logout...');
-  const logoutRes = await request(
-    {
-      host: 'localhost',
-      port: 3000,
-      path: '/api/v1/auth/logout',
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    },
-    { refreshToken: newRefreshToken },
+  // 7. Old refresh token should now be revoked (rotation)
+  console.log('\n[TEST 7] Testing that the rotated-out refresh token is now rejected...');
+  const reuseRes = await post('/api/v1/auth/refresh', { refreshToken });
+  check(
+    reuseRes.statusCode === 401,
+    '✅ Old refresh token correctly rejected after rotation!',
+    '❌ Refresh token rotation failed!',
+    reuseRes.body,
   );
-  console.log('Logout Response:', logoutRes);
-  if (logoutRes.statusCode === 200) {
-    console.log('✅ Logout succeeded and refresh token invalidated server-side!');
-  } else {
-    console.error('❌ Logout failed!');
-  }
 
-  console.log('\n--- ALL AUTHENTICATION TESTS PASSED SUCCESSFULLY! ---');
+  // 8. Logout
+  console.log('\n[TEST 8] Testing POST /api/v1/auth/logout...');
+  const logoutRes = await post('/api/v1/auth/logout', { refreshToken: newRefreshToken });
+  check(
+    logoutRes.statusCode === 200,
+    '✅ Logout succeeded and refresh token invalidated server-side!',
+    '❌ Logout failed!',
+    logoutRes.body,
+  );
+
+  if (allPassed) {
+    console.log('\n--- ALL AUTHENTICATION TESTS PASSED ---');
+  } else {
+    console.error('\n--- SOME AUTHENTICATION TESTS FAILED ---');
+    process.exitCode = 1;
+  }
 }
 
-runTests().catch(console.error);
+runTests().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+});

@@ -4,7 +4,6 @@ import { PassportModule } from '@nestjs/passport';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
-import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
@@ -13,7 +12,6 @@ import { MailModule } from '../mail/mail.module';
       secret: process.env.JWT_SECRET || 'noxchat_super_secret_jwt_key_2026',
       signOptions: { expiresIn: '15m' },
     }),
-    MailModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
